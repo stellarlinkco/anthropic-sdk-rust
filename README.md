@@ -36,3 +36,25 @@ async fn main() -> Result<(), anthropic_sdk::Error> {
 }
 ```
 
+## Examples
+
+Build all examples:
+
+```bash
+cargo build --examples
+```
+
+Run the mock smoke test (no API key required):
+
+```bash
+cargo run -p anthropic-sdk --example smoke_mock
+```
+
+Run real API examples (requires `ANTHROPIC_API_KEY`):
+
+```bash
+cargo run -p anthropic-sdk --example messages_create
+cargo run -p anthropic-sdk --example messages_stream
+cargo run -p anthropic-sdk --example beta_messages_count_tokens
+cargo run -p anthropic-sdk --example beta_files_upload -- ./path/to/file text/plain
+```
