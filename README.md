@@ -55,6 +55,8 @@ Run real API examples (requires `ANTHROPIC_API_KEY`):
 ```bash
 cargo run -p anthropic-sdk --example messages_create
 cargo run -p anthropic-sdk --example messages_stream
+cargo run -p anthropic-sdk --example beta_messages_create
+cargo run -p anthropic-sdk --example beta_messages_stream
 cargo run -p anthropic-sdk --example beta_messages_count_tokens
 cargo run -p anthropic-sdk --example beta_files_upload -- ./path/to/file text/plain
 ```
