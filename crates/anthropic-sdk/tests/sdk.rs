@@ -1,10 +1,17 @@
+use anthropic_sdk::resources::beta::files::FileUploadParams;
+use anthropic_sdk::resources::beta::messages::{
+    BetaMessageCountTokensParams, BetaMessageCreateParams,
+};
 use anthropic_sdk::types::batches::MessageBatchResult;
-use anthropic_sdk::types::messages::{MessageCreateParams, MessageParam, RawMessageStreamEvent};
+use anthropic_sdk::types::messages::{
+    MessageCountTokensParams, MessageCreateParams, MessageParam, RawMessageStreamEvent,
+};
 use anthropic_sdk::types::models::ModelListParams;
 use anthropic_sdk::{Anthropic, ClientOptions, Error};
 use futures_util::StreamExt;
 use reqwest::header::HeaderMap;
 use serde_json::json;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +28,170 @@ fn client_for(server: &MockServer) -> Anthropic {
         default_headers: HeaderMap::new(),
     })
     .unwrap()
+}
+
+#[tokio::test]
+async fn beta_messages_create_sends_beta_query_and_header() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+          "id": "msg_1",
+          "type": "message"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server);
+    let _ = client
+        .beta
+        .messages
+        .create(
+            BetaMessageCreateParams {
+                betas: Some(vec!["my-beta".to_string()]),
+                body: MessageCreateParams {
+                    model: "test-model".to_string(),
+                    max_tokens: 16,
+                    messages: vec![MessageParam::user("hi")],
+                    ..Default::default()
+                },
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].url.query(), Some("beta=true"));
+    assert_eq!(
+        reqs[0]
+            .headers
+            .get("anthropic-beta")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "my-beta"
+    );
+}
+
+#[tokio::test]
+async fn beta_messages_count_tokens_injects_token_counting_beta() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages/count_tokens"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+          "input_tokens": 123
+        })))
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server);
+    let out = client
+        .beta
+        .messages
+        .count_tokens(
+            BetaMessageCountTokensParams {
+                betas: None,
+                body: MessageCountTokensParams {
+                    model: "test-model".to_string(),
+                    messages: vec![MessageParam::user("hi")],
+                    ..Default::default()
+                },
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.input_tokens, 123);
+
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].url.query(), Some("beta=true"));
+    assert_eq!(
+        reqs[0]
+            .headers
+            .get("anthropic-beta")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "token-counting-2024-11-01"
+    );
+}
+
+#[tokio::test]
+async fn beta_files_upload_is_multipart_and_injects_files_beta() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/files"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+          "id": "file_1",
+          "created_at": "2025-01-01T00:00:00Z",
+          "filename": "test.txt",
+          "mime_type": "text/plain",
+          "size_bytes": 5,
+          "type": "file",
+          "downloadable": true
+        })))
+        .mount(&server)
+        .await;
+
+    let file_path = write_temp_file("anthropic-sdk-test.txt", b"hello");
+
+    let client = client_for(&server);
+    let out = client
+        .beta
+        .files
+        .upload(
+            FileUploadParams {
+                path: file_path.clone(),
+                filename: None,
+                mime_type: Some("text/plain".to_string()),
+                betas: None,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.id, "file_1");
+
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(
+        reqs[0]
+            .headers
+            .get("anthropic-beta")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "files-api-2025-04-14"
+    );
+    let ct = reqs[0]
+        .headers
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(ct.starts_with("multipart/form-data; boundary="));
+    assert!(String::from_utf8_lossy(&reqs[0].body).contains("hello"));
+
+    std::fs::remove_file(&file_path).unwrap();
+}
+
+fn write_temp_file(name: &str, contents: &[u8]) -> PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let mut path = std::env::temp_dir();
+    path.push(format!("{name}-{ts}"));
+    std::fs::write(&path, contents).unwrap();
+    path
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
 use crate::error::{ApiError, Error, HttpApiError};
-use crate::resources::{completions::Completions, messages::Messages, models::Models};
+use crate::resources::{beta::Beta, completions::Completions, messages::Messages, models::Models};
 use crate::streaming::{RawStream, SseEvent, SseParser};
 use bytes::Bytes;
 use futures_util::stream::BoxStream;
@@ -8,6 +8,7 @@ use httpdate::parse_http_date;
 use reqwest::header::{
     HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT,
 };
+use reqwest::multipart::Form;
 use reqwest::{Client as HttpClient, Method, Response, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -90,6 +91,7 @@ pub struct Anthropic {
     pub messages: Messages,
     pub models: Models,
     pub completions: Completions,
+    pub beta: Beta,
 }
 
 impl Anthropic {
@@ -99,6 +101,7 @@ impl Anthropic {
             messages: Messages::new(inner.clone()),
             models: Models::new(inner.clone()),
             completions: Completions::new(inner.clone()),
+            beta: Beta::new(inner.clone()),
         })
     }
 
@@ -299,6 +302,136 @@ impl Inner {
             status,
             headers,
         })
+    }
+
+    pub async fn request_multipart_json<T, F>(
+        &self,
+        method: Method,
+        path_or_url: &str,
+        query: Option<Vec<(String, String)>>,
+        build_form: F,
+        options: RequestOptions,
+    ) -> Result<ApiResponse<T>, Error>
+    where
+        T: DeserializeOwned,
+        F: Fn() -> Result<Form, Error> + Send + Sync,
+    {
+        let response = self
+            .request_multipart_raw(method, path_or_url, query, build_form, options.clone())
+            .await?;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let request_id = headers
+            .get(HEADER_REQUEST_ID)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let bytes = response.bytes().await?;
+        let data = serde_json::from_slice::<T>(&bytes)?;
+        Ok(ApiResponse {
+            data,
+            request_id,
+            status,
+            headers,
+        })
+    }
+
+    pub async fn request_multipart_raw<F>(
+        &self,
+        method: Method,
+        path_or_url: &str,
+        query: Option<Vec<(String, String)>>,
+        build_form: F,
+        options: RequestOptions,
+    ) -> Result<Response, Error>
+    where
+        F: Fn() -> Result<Form, Error> + Send + Sync,
+    {
+        let timeout = options.timeout.unwrap_or(self.timeout);
+        let max_retries = options.max_retries.unwrap_or(self.max_retries);
+
+        let mut url = self.build_url(path_or_url)?;
+        if let Some(pairs) = query {
+            if !pairs.is_empty() {
+                let mut qp = url.query_pairs_mut();
+                for (k, v) in pairs {
+                    qp.append_pair(&k, &v);
+                }
+            }
+        }
+
+        let mut retries_remaining = max_retries;
+        loop {
+            let retry_count = max_retries.saturating_sub(retries_remaining);
+            let headers = self.make_headers(retry_count, timeout, &options)?;
+            let form = build_form()?;
+
+            let req = self
+                .http
+                .request(method.clone(), url.clone())
+                .headers(headers)
+                .multipart(form);
+
+            let response = tokio::time::timeout(timeout, req.send()).await;
+            match response {
+                Err(_) => {
+                    if retries_remaining > 0 {
+                        let delay = Self::default_retry_delay(retries_remaining, max_retries);
+                        tokio::time::sleep(delay).await;
+                        retries_remaining -= 1;
+                        continue;
+                    }
+                    return Err(Error::Timeout);
+                }
+                Ok(resp) => match resp {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            return Ok(resp);
+                        }
+
+                        let status = resp.status();
+                        let headers = resp.headers().clone();
+                        let should_retry = retries_remaining > 0
+                            && Self::should_retry_status_headers(status, &headers);
+
+                        let body_bytes = resp.bytes().await.unwrap_or_default();
+                        let json = serde_json::from_slice::<Value>(&body_bytes).ok();
+                        let text = String::from_utf8_lossy(&body_bytes).to_string();
+                        let message = extract_error_message(json.as_ref(), &text);
+                        let api_err = ApiError::new(Some(status), Some(&headers), json, message);
+                        let http_err = HttpApiError::from_status(Some(status), api_err);
+
+                        if should_retry {
+                            let delay = Self::retry_delay_from_headers(&headers)
+                                .filter(|d| *d < Duration::from_secs(60))
+                                .unwrap_or_else(|| {
+                                    Self::default_retry_delay(retries_remaining, max_retries)
+                                });
+                            tokio::time::sleep(delay).await;
+                            retries_remaining -= 1;
+                            continue;
+                        }
+
+                        return Err(Error::Http(http_err));
+                    }
+                    Err(err) => {
+                        let is_timeout = err.is_timeout();
+                        if retries_remaining > 0 {
+                            let delay = Self::default_retry_delay(retries_remaining, max_retries);
+                            tokio::time::sleep(delay).await;
+                            retries_remaining -= 1;
+                            continue;
+                        }
+
+                        if is_timeout {
+                            return Err(Error::Timeout);
+                        }
+                        return Err(Error::Transport(err));
+                    }
+                },
+            }
+        }
     }
 
     pub async fn request_raw<B>(
