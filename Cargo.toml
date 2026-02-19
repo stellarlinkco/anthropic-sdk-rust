@@ -1,0 +1,4 @@
+[workspace]
+members = ["crates/anthropic-sdk"]
+resolver = "2"
+
