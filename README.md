@@ -11,7 +11,22 @@ This is an early version focusing on the core Anthropic API surface:
 - Message Batches (including JSONL results streaming)
 - Legacy Completions
 
+## Install
+
+```toml
+[dependencies]
+anthropic-sdk-rs = "0.1.2"
+```
+
+Or:
+
+```bash
+cargo add anthropic-sdk-rs
+```
+
 ## Quickstart
+
+Package name on crates.io is `anthropic-sdk-rs`; Rust import path is `anthropic_sdk`.
 
 ```rust
 use anthropic_sdk::{Anthropic, ClientOptions};
@@ -47,16 +62,30 @@ cargo build --examples
 Run the mock smoke test (no API key required):
 
 ```bash
-cargo run -p anthropic-sdk --example smoke_mock
+cargo run -p anthropic-sdk-rs --example smoke_mock
 ```
 
 Run real API examples (requires `ANTHROPIC_API_KEY`):
 
 ```bash
-cargo run -p anthropic-sdk --example messages_create
-cargo run -p anthropic-sdk --example messages_stream
-cargo run -p anthropic-sdk --example beta_messages_create
-cargo run -p anthropic-sdk --example beta_messages_stream
-cargo run -p anthropic-sdk --example beta_messages_count_tokens
-cargo run -p anthropic-sdk --example beta_files_upload -- ./path/to/file text/plain
+cargo run -p anthropic-sdk-rs --example messages_create
+cargo run -p anthropic-sdk-rs --example messages_stream
+cargo run -p anthropic-sdk-rs --example beta_messages_create
+cargo run -p anthropic-sdk-rs --example beta_messages_stream
+cargo run -p anthropic-sdk-rs --example beta_messages_count_tokens
+cargo run -p anthropic-sdk-rs --example beta_files_upload -- ./path/to/file text/plain
+```
+
+## Publishing
+
+Dry-run publish:
+
+```bash
+make publish-dry-run
+```
+
+If you intentionally want to include uncommitted changes:
+
+```bash
+make publish-dry-run-dirty
 ```

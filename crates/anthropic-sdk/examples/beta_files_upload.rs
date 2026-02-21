@@ -3,7 +3,7 @@ use anthropic_sdk::{Anthropic, ClientOptions};
 use std::path::PathBuf;
 
 fn usage() -> ! {
-    eprintln!("usage: cargo run -p anthropic-sdk --example beta_files_upload -- <path> [mime_type] [filename]");
+    eprintln!("usage: cargo run -p anthropic-sdk-rs --example beta_files_upload -- <path> [mime_type] [filename]");
     std::process::exit(2);
 }
 

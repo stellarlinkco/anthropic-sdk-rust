@@ -3,7 +3,7 @@ use anthropic_sdk::{Anthropic, ClientOptions};
 use futures_util::StreamExt;
 
 fn usage() -> ! {
-    eprintln!("usage: cargo run -p anthropic-sdk --example batches_results -- <batch_id>");
+    eprintln!("usage: cargo run -p anthropic-sdk-rs --example batches_results -- <batch_id>");
     std::process::exit(2);
 }
 

@@ -12,8 +12,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "anthropic-sdk"
-version = "0.1.0"
+name = "anthropic-sdk-rs"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "fastrand",
